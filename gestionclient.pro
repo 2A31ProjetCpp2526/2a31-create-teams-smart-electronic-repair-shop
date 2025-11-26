@@ -1,27 +1,35 @@
-QT += sql
+TEMPLATE = app
+TARGET = gestionclient
+
+QT += widgets sql
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
-
 CONFIG += c++17
-
-# You can make your code fail to compile if it uses deprecated APIs.
-# In order to do so, uncomment the following line.
-#DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
+QT += texttospeech
 
 SOURCES += \
     client.cpp \
     connexion.cpp \
+    equipement.cpp \
     gestionclient.cpp \
-    main.cpp
+    main.cpp \
+    qrcodechai.cpp \
+    qrcodogen.cpp
 
 HEADERS += \
     client.h \
     connexion.h \
-    gestionclient.h
+    equipement.h \
+    gestionclient.h \
+    qrcodechai.h \
+    qrcodogen.h
 
 FORMS += \
-    gestionclient.ui
+    gestionclient.ui \
+    mainwindow.ui \
+    qrcodechai.ui
 
-# Default rules for deployment.
+LIBS += -lodbc32
+
 qnx: target.path = /tmp/$${TARGET}/bin
 else: unix:!android: target.path = /opt/$${TARGET}/bin
 !isEmpty(target.path): INSTALLS += target

@@ -19,6 +19,12 @@ public:
     bool modifier();
     static bool supprimer(int id);
     static QSqlQueryModel* afficher();
+    static QSqlQueryModel* rechercherParId(int id);
+    static QMap<QString, int> getEmailDomainStats();
+    static QSqlQueryModel* trierParNom();
+    static QSqlQueryModel* trierParPrenom();
+    static QSqlQueryModel* rechercherParIdPrefix(const QString &prefix);
+
 };
 
 #endif // CLIENT_H

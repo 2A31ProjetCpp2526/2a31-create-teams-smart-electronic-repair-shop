@@ -1,0 +1,10 @@
+release/client.o
+release/connexion.o
+release/equipement.o
+release/gestionclient.o
+release/main.o
+release/main.o
+release/main.o
+release/mainwindow.o
+release/moc_gestionclient.o
+release/moc_mainwindow.o

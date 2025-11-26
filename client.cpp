@@ -1,3 +1,4 @@
+
 #include "client.h"
 #include <QtSql/QSqlQuery>
 #include <QtSql/QSqlError>
@@ -8,10 +9,10 @@
 
 Client::Client() : id_client(0), nom(""), prenom(""), telephone(""), email("") {}
 
-// ---- helpers
+
 static QString esc(QString s){ s.replace("'", "''"); return s; }
 
-// ---- INSERT préparé (ODBC, bind texte + TO_NUMBER(?))
+
 static bool execInsertPreparedODBC(const Client& c, QString* errOut)
 {
     QSqlDatabase db = QSqlDatabase::database("oracle_conn");
@@ -35,13 +36,13 @@ static bool execInsertPreparedODBC(const Client& c, QString* errOut)
     return true;
 }
 
-// ---- INSERT direct (fallback)
+
 static bool execInsertDirect(const Client& c, QString* errOut)
 {
     QSqlDatabase db = QSqlDatabase::database("oracle_conn");
     QSqlQuery q(db);
 
-    // Garde-fou NUMBER NOT NULL
+
     bool okTel=false; c.telephone.trimmed().toLongLong(&okTel);
     if (!okTel || c.telephone.trimmed().isEmpty()) {
         if (errOut) *errOut = "Téléphone doit être numérique et non vide (NUMBER NOT NULL).";
@@ -64,7 +65,7 @@ static bool execInsertDirect(const Client& c, QString* errOut)
     return true;
 }
 
-// ---- CRUD: AJOUTER
+
 bool Client::ajouter()
 {
     QSqlDatabase db = QSqlDatabase::database("oracle_conn");
@@ -79,7 +80,7 @@ bool Client::ajouter()
     return false;
 }
 
-// ---- CRUD: MODIFIER
+
 bool Client::modifier()
 {
     QSqlDatabase db = QSqlDatabase::contains("oracle_conn")
@@ -87,12 +88,12 @@ bool Client::modifier()
     : QSqlDatabase::database();
     if (!db.isOpen()) { qWarning() << "DB non ouverte"; return false; }
 
-    // Garde-fou NUMBER NOT NULL
+
     if (telephone.trimmed().isEmpty()) { qWarning() << "Téléphone vide (NOT NULL)"; return false; }
     bool okTel=false; telephone.trimmed().toLongLong(&okTel);
     if (!okTel) { qWarning() << "Téléphone non numérique (NUMBER)"; return false; }
 
-    // 1) préparée
+
     {
         QSqlQuery q(db);
         q.prepare(
@@ -112,7 +113,7 @@ bool Client::modifier()
                    << q.lastError().driverText() << "|" << q.lastError().databaseText();
     }
 
-    // 2) direct
+
     {
         const QString sql = QString(
                                 "UPDATE SYSTEM.GS_CLIENT1 "
@@ -134,7 +135,6 @@ bool Client::modifier()
     }
 }
 
-// ---- CRUD: SUPPRIMER
 bool Client::supprimer(int id)
 {
     QSqlDatabase db = QSqlDatabase::contains("oracle_conn")
@@ -153,7 +153,7 @@ bool Client::supprimer(int id)
                    << q.lastError().driverText() << "|" << q.lastError().databaseText();
     }
 
-    // 2) direct
+
     {
         const QString sql = QString("DELETE FROM SYSTEM.GS_CLIENT1 WHERE ID_CLIENT=%1").arg(id);
         QSqlQuery q(db);
@@ -166,7 +166,7 @@ bool Client::supprimer(int id)
     }
 }
 
-// ---- AFFICHER (pour QTableView/QTableWidget via modèle)
+
 QSqlQueryModel* Client::afficher()
 {
     QSqlDatabase db = QSqlDatabase::contains("oracle_conn")
@@ -188,3 +188,125 @@ QSqlQueryModel* Client::afficher()
     model->setHeaderData(4, Qt::Horizontal, QObject::tr("Email"));
     return model;
 }
+QSqlQueryModel* Client::rechercherParId(int id)
+{
+    QSqlDatabase db = QSqlDatabase::database("oracle_conn");
+    if (!db.isOpen()) db.open();
+
+    QSqlQuery q(db);
+    q.prepare("SELECT ID_CLIENT,NOM,PRENOM,TELEPHONE,EMAIL FROM SYSTEM.GS_CLIENT1 WHERE ID_CLIENT=:id");
+    q.bindValue(":id", id);
+    if (!q.exec()) { qWarning() << "[rechId]" << q.lastError().text(); return nullptr; }
+
+    auto *m = new QSqlQueryModel();
+    m->setQuery(std::move(q));
+    return m;
+}
+QMap<QString, int> Client::getEmailDomainStats()
+{
+    QMap<QString, int> stats;
+
+    QSqlDatabase db = QSqlDatabase::contains("oracle_conn")
+                          ? QSqlDatabase::database("oracle_conn")
+                          : QSqlDatabase::database();
+
+    if (!db.isOpen() && !db.open()) {
+        qWarning() << "[getEmailDomainStats] DB non ouverte";
+        return stats;
+    }
+
+    QSqlQuery q(db);
+    if (!q.exec("SELECT EMAIL FROM SYSTEM.GS_CLIENT1")) {
+        qWarning() << "[getEmailDomainStats]"
+                   << q.lastError().driverText()
+                   << "|" << q.lastError().databaseText();
+        return stats;
+    }
+
+    while (q.next()) {
+        QString email = q.value(0).toString().trimmed().toLower();
+        int atPos = email.indexOf('@');
+        if (atPos == -1) continue;
+
+        QString domain = email.mid(atPos + 1); // ex: "gmail.com", "yahoo.fr", ...
+
+        if (domain.contains("gmail"))
+            stats["Gmail"]++;
+        else if (domain.contains("yahoo"))
+            stats["Yahoo"]++;
+        else if (domain.contains("outlook") || domain.contains("hotmail") || domain.contains("live"))
+            stats["Outlook"]++;
+        else
+            stats["Autres"]++;
+    }
+
+    return stats;
+}
+QSqlQueryModel* Client::trierParNom()
+{
+    QSqlDatabase db = QSqlDatabase::contains("oracle_conn")
+    ? QSqlDatabase::database("oracle_conn")
+    : QSqlDatabase::database();
+
+    QSqlQueryModel *model = new QSqlQueryModel();
+
+    model->setQuery(
+        "SELECT ID_CLIENT, NOM, PRENOM, TELEPHONE, EMAIL "
+        "FROM SYSTEM.GS_CLIENT1 "
+        "ORDER BY NOM ASC, PRENOM ASC",
+        db
+        );
+
+    return model;
+}
+QSqlQueryModel* Client::trierParPrenom()
+{
+    QSqlDatabase db = QSqlDatabase::contains("oracle_conn")
+    ? QSqlDatabase::database("oracle_conn")
+    : QSqlDatabase::database();
+
+    QSqlQueryModel *model = new QSqlQueryModel();
+
+    model->setQuery(
+        "SELECT ID_CLIENT, NOM, PRENOM, TELEPHONE, EMAIL "
+        "FROM SYSTEM.GS_CLIENT1 "
+        "ORDER BY PRENOM ASC, NOM ASC",
+        db
+        );
+
+    return model;
+}
+QSqlQueryModel* Client::rechercherParIdPrefix(const QString &prefix)
+{
+    // même logique que afficher(), trierParNom(), etc.
+    QSqlDatabase db = QSqlDatabase::contains("oracle_conn")
+                          ? QSqlDatabase::database("oracle_conn")
+                          : QSqlDatabase::database();
+
+    if (!db.isOpen() && !db.open()) {
+        qWarning() << "[rechercherParIdPrefix] DB non ouverte";
+        return nullptr;
+    }
+
+    QSqlQuery q(db);
+    q.prepare(
+        "SELECT ID_CLIENT, NOM, PRENOM, TELEPHONE, EMAIL "
+        "FROM SYSTEM.GS_CLIENT1 "
+        "WHERE TO_CHAR(ID_CLIENT) LIKE :p "
+        "ORDER BY ID_CLIENT"
+        );
+    q.bindValue(":p", prefix + '%');
+
+    if (!q.exec()) {
+        qWarning() << "[rechercherParIdPrefix]"
+                   << q.lastError().driverText()
+                   << "|" << q.lastError().databaseText();
+        return nullptr;
+    }
+
+    auto *model = new QSqlQueryModel();
+    model->setQuery(std::move(q));   // évite l’avertissement de copie
+    return model;
+}
+
+

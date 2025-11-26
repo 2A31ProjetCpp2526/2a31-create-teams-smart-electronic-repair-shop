@@ -1,0 +1,10 @@
+debug/client.o
+debug/connexion.o
+debug/equipement.o
+debug/gestionclient.o
+debug/main.o
+debug/main.o
+debug/main.o
+debug/mainwindow.o
+debug/moc_gestionclient.o
+debug/moc_mainwindow.o

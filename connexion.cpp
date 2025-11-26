@@ -4,14 +4,14 @@
 
 bool Connexion::createconnect(QString* err)
 {
-    // Utilise une connexion NOMMÉE pour qu'on la retrouve ensuite
+
     QSqlDatabase db;
     if (QSqlDatabase::contains("oracle_conn"))
         db = QSqlDatabase::database("oracle_conn");
     else
         db = QSqlDatabase::addDatabase("QODBC", "oracle_conn");
 
-    // Ton DSN Windows s’appelle Source_Projet2A (vu en capture)
+
     db.setDatabaseName("Source_Projet2A");
     db.setUserName("Chaima");
     db.setPassword("esprit21");
@@ -23,4 +23,9 @@ bool Connexion::createconnect(QString* err)
     }
     qDebug() << "Connexion réussie à la base de données.";
     return true;
+}
+QSqlDatabase Connexion::db()
+{
+    // Renvoie la connexion nommée; si elle n’existe pas / pas ouverte, renverra une DB invalide.
+    return QSqlDatabase::database("oracle_conn");
 }

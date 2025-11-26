@@ -64,6 +64,7 @@ public:
     QPushButton *pushButton_5;
     QPushButton *pushButton_modifier;
     QPushButton *pushButton_supprimer;
+    QPushButton *pushButton_ToEmployes;
     QMenuBar *menubar;
     QStatusBar *statusbar;
 
@@ -395,6 +396,9 @@ public:
         pushButton_supprimer = new QPushButton(groupBox);
         pushButton_supprimer->setObjectName("pushButton_supprimer");
         pushButton_supprimer->setGeometry(QRect(1090, 310, 71, 71));
+        pushButton_ToEmployes = new QPushButton(groupBox);
+        pushButton_ToEmployes->setObjectName("pushButton_ToEmployes");
+        pushButton_ToEmployes->setGeometry(QRect(960, 520, 93, 29));
         GestionClient->setCentralWidget(centralwidget);
         menubar = new QMenuBar(GestionClient);
         menubar->setObjectName("menubar");
@@ -453,6 +457,7 @@ public:
         pushButton_5->setText(QCoreApplication::translate("GestionClient", "Trier", nullptr));
         pushButton_modifier->setText(QCoreApplication::translate("GestionClient", "\342\234\217\357\270\217", nullptr));
         pushButton_supprimer->setText(QCoreApplication::translate("GestionClient", "\360\237\227\221\357\270\217", nullptr));
+        pushButton_ToEmployes->setText(QCoreApplication::translate("GestionClient", "go", nullptr));
     } // retranslateUi
 
 };
