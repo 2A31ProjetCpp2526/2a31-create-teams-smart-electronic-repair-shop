@@ -27,6 +27,9 @@ public:
     bool supprimer(int);
     bool modifier();
     QSqlQuery  afficher();
+    bool doitNotifier() const;
+    int joursRestants() const;
+
 };
 
 #endif // EQUIPEMENT_H

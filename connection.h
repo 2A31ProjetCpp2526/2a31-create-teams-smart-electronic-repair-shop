@@ -6,6 +6,8 @@ class connection
 public:
     static connection* instance();
     bool createConnect();
+    static bool createconnect(QString* err = nullptr);
+    static QSqlDatabase db();
 private:
     connection();
     ~connection();

@@ -46,7 +46,7 @@ bool Equipement::modifier()
 {
     QSqlQuery query;
     query.prepare("UPDATE equipement SET TYPE=:type, MARQUE_MODELE=:marque_modele, "
-                  "DATE_DEPOT=:dateDepot, ETAT=:etat, DESCRIPTION_PANNE=:description_panne,IMAGE_PATH=:image_path "
+                  "DATE_DEPOT=:dateDepot, ETAT=:etat, DESCRIPTION_PANNE=:description_panne,IMAGE_PATH=:image_path,DATE_LIMITE=:date_limite "
                   "WHERE ID_EQUIPEMENT=:id");
 
     query.bindValue(":id", id);
@@ -56,6 +56,7 @@ bool Equipement::modifier()
     query.bindValue(":etat", etat);
     query.bindValue(":description_panne", description_panne);
     query.bindValue(":image_path",image_path);
+    query.bindValue(":date_limite",dateLimite);
 
     bool ok = query.exec();
 

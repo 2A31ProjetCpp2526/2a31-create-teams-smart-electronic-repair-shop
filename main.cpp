@@ -1,4 +1,4 @@
-#include "mainwindow.h"
+#include "smartelectronic.h"
 #include "connection.h"
 #include <QApplication>
 #include <QMessageBox>
@@ -10,7 +10,7 @@ int main(int argc, char *argv[])
     connection* c = connection::instance();
     if (c->createConnect()) {
         QMessageBox::information(nullptr, QObject::tr("Connexion"), QObject::tr("Connexion réussie à la base de données."));
-        MainWindow w;
+        SmartElectronic w;
         w.show();
         return a.exec();
     } else {

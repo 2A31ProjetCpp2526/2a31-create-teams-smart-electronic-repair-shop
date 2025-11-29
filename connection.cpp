@@ -24,8 +24,8 @@ bool connection::createConnect()
 {
     bool test = false;
     QSqlDatabase db = QSqlDatabase::addDatabase("QODBC");
-    db.setDatabaseName("source_projet2A"); // Nom du DSN Oracle
-    db.setUserName("douaa");               // Ton utilisateur Oracle
+    db.setDatabaseName("DS_SMARTELECTRONIC"); // Nom du DSN Oracle
+    db.setUserName("SMARTELECTRONIC");               // Ton utilisateur Oracle
     db.setPassword("123456");              // Ton mot de passe Oracle
 
     if (db.open()) {
@@ -36,4 +36,9 @@ bool connection::createConnect()
     }
 
     return test;
+}
+
+QSqlDatabase connection::db()
+{
+    return QSqlDatabase::database();
 }
