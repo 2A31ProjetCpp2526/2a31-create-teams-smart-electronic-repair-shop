@@ -83,57 +83,42 @@ bool Client::ajouter()
 
 bool Client::modifier()
 {
-    QSqlDatabase db = QSqlDatabase::contains("oracle_conn")
-    ? QSqlDatabase::database("oracle_conn")
-    : QSqlDatabase::database();
-    if (!db.isOpen()) { qWarning() << "DB non ouverte"; return false; }
+    // même connexion que pour execInsertDirect
+    QSqlDatabase db = QSqlDatabase::database("oracle_conn");
+    QSqlQuery q(db);
 
-
-    if (telephone.trimmed().isEmpty()) { qWarning() << "Téléphone vide (NOT NULL)"; return false; }
-    bool okTel=false; telephone.trimmed().toLongLong(&okTel);
-    if (!okTel) { qWarning() << "Téléphone non numérique (NUMBER)"; return false; }
-
-
-    {
-        QSqlQuery q(db);
-        q.prepare(
-            "UPDATE SYSTEM.GS_CLIENT1 "
-            "SET NOM=?, PRENOM=?, TELEPHONE=TO_NUMBER(?), EMAIL=? "
-            "WHERE ID_CLIENT=?"
-            );
-        q.addBindValue(nom.trimmed());
-        q.addBindValue(prenom.trimmed());
-        q.addBindValue(telephone.trimmed());  // bind TEXT -> TO_NUMBER(?)
-        q.addBindValue(email.trimmed());
-        q.addBindValue(id_client);
-
-        if (q.exec()) return true;
-
-        qWarning() << "[modifier] prepared KO:"
-                   << q.lastError().driverText() << "|" << q.lastError().databaseText();
+    // Vérifier téléphone comme dans l'INSERT
+    bool okTel = false;
+    QString telTrim = telephone.trimmed();
+    telTrim.toLongLong(&okTel);
+    if (!okTel || telTrim.isEmpty()) {
+        qDebug() << "Téléphone doit être numérique et non vide (NUMBER NOT NULL).";
+        return false;
     }
 
+    // IMPORTANT : esc(...) est la même fonction que tu utilises déjà dans execInsertDirect
+    QString sql = QString(
+                      "UPDATE SYSTEM.GS_CLIENT1 "
+                      "SET NOM = '%1', "
+                      "    PRENOM = '%2', "
+                      "    TELEPHONE = TO_NUMBER('%3'), "
+                      "    EMAIL = '%4' "
+                      "WHERE ID_CLIENT = %5"
+                      )
+                      .arg(esc(nom.trimmed()))
+                      .arg(esc(prenom.trimmed()))
+                      .arg(esc(telTrim))
+                      .arg(esc(email.trimmed()))
+                      .arg(id_client);
 
-    {
-        const QString sql = QString(
-                                "UPDATE SYSTEM.GS_CLIENT1 "
-                                "SET NOM='%1', PRENOM='%2', TELEPHONE=TO_NUMBER('%3'), EMAIL='%4' "
-                                "WHERE ID_CLIENT=%5"
-                                ).arg(esc(nom.trimmed()))
-                                .arg(esc(prenom.trimmed()))
-                                .arg(esc(telephone.trimmed()))
-                                .arg(esc(email.trimmed()))
-                                .arg(id_client);
-
-        QSqlQuery q(db);
-        if (!q.exec(sql)) {
-            qWarning() << "[modifier] direct KO:"
-                       << q.lastError().driverText() << "|" << q.lastError().databaseText();
-            return false;
-        }
-        return true;
+    if (!q.exec(sql)) {
+        qDebug() << "Erreur UPDATE SYSTEM.GS_CLIENT1 :" << q.lastError();
+        return false;
     }
+
+    return true;
 }
+
 
 bool Client::supprimer(int id)
 {

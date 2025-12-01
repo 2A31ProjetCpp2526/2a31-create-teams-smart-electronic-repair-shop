@@ -11,6 +11,8 @@
 #include <QVoice>
 #include <QMainWindow>
 #include <QComboBox>
+#include <QSerialPort>
+#include <QSerialPortInfo>
 #include "equipement.h"
 
 //
@@ -31,6 +33,7 @@ private slots:
     void on_pushButton_1_clicked();         // Ajouter
     void on_pushButton_modifier_clicked();  // Modifier
     void on_pushButton_supprimer_clicked(); // Supprimer
+    void on_tableWidget_cellClicked(int row, int column);
     void goTomainwindow();
     void on_pushButton_2_clicked();
     void on_pushButton_pdf_clicked();
@@ -54,6 +57,8 @@ private:
     Ui::GestionClient *ui;
     QTextToSpeech *speech;
     QComboBox *voiceCombo;
+    QSerialPort *arduino;
+    QString arduinoPortName = "";
 };
 
 

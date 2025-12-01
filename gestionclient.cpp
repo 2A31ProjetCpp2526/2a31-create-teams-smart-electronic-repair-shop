@@ -30,21 +30,37 @@ using namespace qrcodegen;
 #include <QDebug>
 #include <QSqlError>
 
+static QString emailNatural(const QString &mail)
+{
+    QString out = mail;
+    out.replace("@", " at ");
+    out.replace(".", " dot ");
+    return out;
+}
 
 
+// ==== Fonction utilitaire pour lire les numéros chiffre par chiffre ====
+QString spellDigits(QString num)
+{
+    QString out;
+    for (QChar c : num) {
+        if (c.isDigit())
+            out += c + QString(" ");
+    }
+    return out.trimmed();
+}
 
 gestionclient::gestionclient(QWidget *parent)
     : QMainWindow(parent),
     ui(new Ui::GestionClient),
+
     speech(new QTextToSpeech(this)),
     voiceCombo(nullptr)
 {
     ui->setupUi(this);
     remplirTable();
-    // 🔊 INITIALISATION SYNTHÈSE VOCALE
-    speech = new QTextToSpeech(this);
 
-    // 🔊 (optionnel) si tu as une comboBox_voice dans le groupBox Speech
+    // ====== INIT SPEECH (ton code existant) ======
 
     voiceCombo = this->findChild<QComboBox*>("comboBox_voice");
     if (!voiceCombo) {
@@ -59,20 +75,17 @@ gestionclient::gestionclient(QWidget *parent)
         }
         connect(ui->lineEdit, &QLineEdit::textChanged,
                 this, [this](const QString &) {
-                    on_pushButton_2_clicked();   // réutilise ton slot existant
+                    on_pushButton_2_clicked();
                 });
 
         remplirTable();
-
         remplirTable();
     }
 
-
-    // Navigation vers la fenêtre principale
+    // ====== NAVIGATION, VALIDATEURS (ton code existant) ======
     connect(ui->pushButton_ToEmployes, &QPushButton::clicked,
             this, &gestionclient::goTomainwindow);
 
-    // Validators
     ui->lineEdit_tel->setValidator(new QRegularExpressionValidator(
         QRegularExpression(R"(^[0-9+\s\-\(\)]{0,20}$)"), ui->lineEdit_tel));
 
@@ -81,7 +94,45 @@ gestionclient::gestionclient(QWidget *parent)
                            QRegularExpression::CaseInsensitiveOption),
         ui->lineEdit_email));
 
+    // ============================
+    //  🔌 Initialisation Arduino
+    // ============================
+    arduino = new QSerialPort(this);
 
+    bool arduinoFound = false;
+
+    const quint16 arduinoUnoVendorId  = 0x2341;  // 2341 en hex
+    const quint16 arduinoUnoProductId = 0x0043;  // 0043 en hex
+
+    // Qt 6 : on préfère le for moderne plutôt que foreach
+    for (const QSerialPortInfo &info : QSerialPortInfo::availablePorts()) {
+        if (info.hasVendorIdentifier() && info.hasProductIdentifier()) {
+            if (info.vendorIdentifier() == arduinoUnoVendorId &&
+                info.productIdentifier() == arduinoUnoProductId) {
+
+                arduinoPortName = info.portName();
+                arduinoFound = true;
+                break;
+            }
+        }
+    }
+
+    if (arduinoFound) {
+        arduino->setPortName(arduinoPortName);
+        if (!arduino->open(QSerialPort::ReadWrite)) {
+            qWarning() << "Impossible d'ouvrir le port Arduino" << arduinoPortName
+                       << ":" << arduino->errorString();
+        } else {
+            arduino->setBaudRate(QSerialPort::Baud9600);
+            arduino->setDataBits(QSerialPort::Data8);
+            arduino->setParity(QSerialPort::NoParity);
+            arduino->setStopBits(QSerialPort::OneStop);
+            arduino->setFlowControl(QSerialPort::NoFlowControl);
+            qDebug() << "Arduino connecté sur" << arduinoPortName;
+        }
+    } else {
+        qWarning() << "Arduino UNO non trouvé.";
+    }
 }
 
 gestionclient::~gestionclient()
@@ -148,10 +199,10 @@ void gestionclient::on_pushButton_1_clicked()   // AJOUT
     }
 }
 
-void gestionclient::on_pushButton_modifier_clicked()   // MODIFIER
+void gestionclient::on_pushButton_modifier_clicked()
 {
     QString msg;
-    // if (!verifTelephone(&msg)) { QMessageBox::warning(this, "Téléphone", msg); return; }
+
     if (!verifTelephoneTN(&msg)) { QMessageBox::warning(this, "Téléphone", msg); return; }
     if (!verifEmail(&msg))       { QMessageBox::warning(this, "Email", msg); return; }
 
@@ -170,11 +221,13 @@ void gestionclient::on_pushButton_modifier_clicked()   // MODIFIER
 
     if (c.modifier()) {
         QMessageBox::information(this, "Modifier", "Mise à jour effectuée.");
-        remplirTable();
+        remplirTable();   // on rafraîchit le tableau
     } else {
-        QMessageBox::critical(this, "Modifier", "Mise à jour non effectuée.");
+        QMessageBox::critical(this, "Modifier", "Erreur lors de la mise à jour.");
     }
 }
+
+
 
 void gestionclient::on_pushButton_supprimer_clicked()
 {
@@ -316,6 +369,27 @@ void gestionclient::on_lineEdit_textChanged(const QString &text)
 
     delete model;
 }
+void gestionclient::on_tableWidget_cellClicked(int row, int column)
+{
+    Q_UNUSED(column); // on ne s'en sert pas
+
+    // Récupère les items de la ligne cliquée
+    QTableWidgetItem *idItem     = ui->tableWidget->item(row, 0);
+    QTableWidgetItem *nomItem    = ui->tableWidget->item(row, 1);
+    QTableWidgetItem *prenomItem = ui->tableWidget->item(row, 2);
+    QTableWidgetItem *telItem    = ui->tableWidget->item(row, 3);
+    QTableWidgetItem *mailItem   = ui->tableWidget->item(row, 4);
+
+    if (!idItem) return; // ligne vide ou invalide
+
+    // Remplir les champs "Ajouter"
+    ui->lineEdit_id->setText(idItem->text());
+    ui->lineEdit_nom->setText(nomItem ? nomItem->text() : "");
+    ui->lineEdit_prenom->setText(prenomItem ? prenomItem->text() : "");
+    ui->lineEdit_tel->setText(telItem ? telItem->text() : "");
+    ui->lineEdit_email->setText(mailItem ? mailItem->text() : "");
+}
+
 
 QImage generateSmallQR(const QString &text, int size = 90)
 {
@@ -710,28 +784,32 @@ void gestionclient::on_pushButton_speech_clicked()
         return;
     }
 
-    QString id        = ui->tableWidget->item(row, 0) ? ui->tableWidget->item(row, 0)->text() : "";
-    QString nom       = ui->tableWidget->item(row, 1) ? ui->tableWidget->item(row, 1)->text() : "";
-    QString prenom    = ui->tableWidget->item(row, 2) ? ui->tableWidget->item(row, 2)->text() : "";
-    QString telephone = ui->tableWidget->item(row, 3) ? ui->tableWidget->item(row, 3)->text() : "";
-    QString email     = ui->tableWidget->item(row, 4) ? ui->tableWidget->item(row, 4)->text() : "";
+    QString id        = ui->tableWidget->item(row, 0)->text();
+    QString nom       = ui->tableWidget->item(row, 1)->text();
+    QString prenom    = ui->tableWidget->item(row, 2)->text();
+    QString telephone = ui->tableWidget->item(row, 3)->text();
+    QString email     = ui->tableWidget->item(row, 4)->text();
 
-    // Appliquer la voix choisie
+    // Voix sélectionnée
     if (voiceCombo) {
         int voiceIndex = voiceCombo->currentIndex();
         const auto voices = speech->availableVoices();
-        if (voiceIndex >= 0 && voiceIndex < voices.size()) {
+        if (voiceIndex >= 0 && voiceIndex < voices.size())
             speech->setVoice(voices.at(voiceIndex));
-        }
     }
+
+    // Téléphone en chiffres séparés
+    QString telSpell = spellDigits(telephone);
+
+    // 👉 Email naturel : "chaima at gmail dot com"
+    QString emailSpell = emailNatural(email);
 
     QString texte = QString(
                         "Client numéro %1. Nom : %2. Prénom : %3. Téléphone : %4. Email : %5."
-                        ).arg(id, nom, prenom, telephone, email);
+                        ).arg(id, nom, prenom, telSpell, emailSpell);
 
     speech->say(texte);
 }
-
 
 
 
