@@ -1,5 +1,6 @@
 #ifndef GESTIONCLIENT_H
 #define GESTIONCLIENT_H
+
 #include <QMainWindow>
 #include <QtCharts/QChartView>
 #include <QtCharts/QPieSeries>
@@ -13,11 +14,10 @@
 #include <QComboBox>
 #include <QSerialPort>
 #include <QSerialPortInfo>
-#include "equipement.h"
 
-//
-// ==== Classe gestionclient ====
-//
+#include "equipement.h"
+#include "arduino.h"
+
 QT_BEGIN_NAMESPACE
 namespace Ui { class GestionClient; }
 QT_END_NAMESPACE
@@ -40,10 +40,12 @@ private slots:
     void on_pushButton_stat_clicked();
     void on_pushButton_trier_clicked();
     void on_pushButton_qr_clicked();
-     void on_pushButton_speech_clicked();   // 🔊 AJOUT ICI
-     void on_lineEdit_textChanged(const QString &text);
+    void on_pushButton_speech_clicked();
+    void on_lineEdit_textChanged(const QString &text);
 
-   // Aller à MainWindow
+    // 🔹 SLOT appelé quand des données arrivent du port série
+    void readSerialData();
+
 
 private:
     void remplirTable();
@@ -57,8 +59,16 @@ private:
     Ui::GestionClient *ui;
     QTextToSpeech *speech;
     QComboBox *voiceCombo;
+
+    // 🔹 Port série pour l’Arduino
     QSerialPort *arduino;
-    QString arduinoPortName = "";
+    QString arduinoPortName;
+
+    static const quint16 ARDUINO_UNO_VENDOR_ID  = 9025; // 0x2341
+    static const quint16 ARDUINO_UNO_PRODUCT_ID = 67;   // 0x0043
+
+    // Initialisation du port série
+    void initSerialPort();
 };
 
 
@@ -82,7 +92,6 @@ private slots:
     void on_btn_modifier_clicked();
     void on_btn_supprimer_clicked();
     void on_btn_actualiser_clicked();
-    //void on_tableWidget_cellChanged(int row, int column);
 
 private:
     Ui::MainWindow *ui;

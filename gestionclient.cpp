@@ -2,6 +2,7 @@
 #include "ui_gestionclient.h"
 #include "client.h"
 #include "connexion.h"
+
 #include <QMessageBox>
 #include <QTableWidgetItem>
 #include <QRegularExpression>
@@ -10,25 +11,23 @@
 #include <QPdfWriter>
 #include <QPainter>
 #include <QDateTime>
-#include <QPagedPaintDevice>
+#include <QPageLayout>
 #include <QPageSize>
 #include <QDialog>
 #include <QVBoxLayout>
-#include <QSqlQuery>
-#include <QSqlError>
-#include "qrcodechai.h"
+#include <QSqlQueryModel>
 #include <QTimer>
+#include <QDebug>
+
+#include "qrcodechai.h"
 #include "qrcodogen.h"
 using namespace qrcodegen;
 
-
-
-
 #include "ui_mainwindow.h"
-#include <QMessageBox>
 #include <QSqlQuery>
-#include <QDebug>
 #include <QSqlError>
+
+// ====== Fonctions utilitaires ======
 
 static QString emailNatural(const QString &mail)
 {
@@ -38,8 +37,7 @@ static QString emailNatural(const QString &mail)
     return out;
 }
 
-
-// ==== Fonction utilitaire pour lire les numéros chiffre par chiffre ====
+// Lire les numéros chiffre par chiffre (pour la synthèse vocale)
 QString spellDigits(QString num)
 {
     QString out;
@@ -50,18 +48,24 @@ QString spellDigits(QString num)
     return out.trimmed();
 }
 
+// =========================
+// ====== gestionclient =====
+// =========================
+
 gestionclient::gestionclient(QWidget *parent)
     : QMainWindow(parent),
     ui(new Ui::GestionClient),
-
     speech(new QTextToSpeech(this)),
-    voiceCombo(nullptr)
+    voiceCombo(nullptr),
+    arduino(nullptr),
+    arduinoPortName("")
 {
     ui->setupUi(this);
+
+    // Remplir la table au démarrage
     remplirTable();
 
-    // ====== INIT SPEECH (ton code existant) ======
-
+    // ====== INIT SPEECH ======
     voiceCombo = this->findChild<QComboBox*>("comboBox_voice");
     if (!voiceCombo) {
         qWarning("Impossible de trouver comboBox_voice (QComboBox) dans l'UI.");
@@ -73,38 +77,57 @@ gestionclient::gestionclient(QWidget *parent)
         if (!speech->availableVoices().isEmpty()) {
             speech->setVoice(speech->availableVoices().first());
         }
+
+        // Quand le texte du champ de recherche change, on relance la logique existante
         connect(ui->lineEdit, &QLineEdit::textChanged,
                 this, [this](const QString &) {
                     on_pushButton_2_clicked();
                 });
 
         remplirTable();
-        remplirTable();
     }
 
-    // ====== NAVIGATION, VALIDATEURS (ton code existant) ======
+    // ====== NAVIGATION ======
     connect(ui->pushButton_ToEmployes, &QPushButton::clicked,
             this, &gestionclient::goTomainwindow);
 
+    // Validateurs téléphone
     ui->lineEdit_tel->setValidator(new QRegularExpressionValidator(
-        QRegularExpression(R"(^[0-9+\s\-\(\)]{0,20}$)"), ui->lineEdit_tel));
+        QRegularExpression(R"(^[0-9+\s\-\(\)]{0,20}$)"),
+        ui->lineEdit_tel));
 
+    // Validateur email
     ui->lineEdit_email->setValidator(new QRegularExpressionValidator(
         QRegularExpression(R"(^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$)",
                            QRegularExpression::CaseInsensitiveOption),
         ui->lineEdit_email));
 
-    // ============================
-    //  🔌 Initialisation Arduino
-    // ============================
+    // ====== Initialisation Arduino (clépad) ======
+    initSerialPort();
+}
+
+gestionclient::~gestionclient()
+{
+    if (arduino && arduino->isOpen()) {
+        arduino->close();
+    }
+    delete ui;
+}
+
+// =========================
+//   Initialisation Arduino
+// =========================
+
+void gestionclient::initSerialPort()
+{
     arduino = new QSerialPort(this);
 
     bool arduinoFound = false;
 
-    const quint16 arduinoUnoVendorId  = 0x2341;  // 2341 en hex
-    const quint16 arduinoUnoProductId = 0x0043;  // 0043 en hex
+    // IDs définis dans le .h
+    const quint16 arduinoUnoVendorId  = ARDUINO_UNO_VENDOR_ID;
+    const quint16 arduinoUnoProductId = ARDUINO_UNO_PRODUCT_ID;
 
-    // Qt 6 : on préfère le for moderne plutôt que foreach
     for (const QSerialPortInfo &info : QSerialPortInfo::availablePorts()) {
         if (info.hasVendorIdentifier() && info.hasProductIdentifier()) {
             if (info.vendorIdentifier() == arduinoUnoVendorId &&
@@ -117,28 +140,77 @@ gestionclient::gestionclient(QWidget *parent)
         }
     }
 
-    if (arduinoFound) {
-        arduino->setPortName(arduinoPortName);
-        if (!arduino->open(QSerialPort::ReadWrite)) {
-            qWarning() << "Impossible d'ouvrir le port Arduino" << arduinoPortName
-                       << ":" << arduino->errorString();
-        } else {
-            arduino->setBaudRate(QSerialPort::Baud9600);
-            arduino->setDataBits(QSerialPort::Data8);
-            arduino->setParity(QSerialPort::NoParity);
-            arduino->setStopBits(QSerialPort::OneStop);
-            arduino->setFlowControl(QSerialPort::NoFlowControl);
-            qDebug() << "Arduino connecté sur" << arduinoPortName;
-        }
-    } else {
+    if (!arduinoFound) {
         qWarning() << "Arduino UNO non trouvé.";
+        return;
+    }
+
+    arduino->setPortName(arduinoPortName);
+    if (!arduino->open(QSerialPort::ReadWrite)) {
+        qWarning() << "Impossible d'ouvrir le port Arduino"
+                   << arduinoPortName << ":" << arduino->errorString();
+        return;
+    }
+
+    arduino->setBaudRate(QSerialPort::Baud9600);
+    arduino->setDataBits(QSerialPort::Data8);
+    arduino->setParity(QSerialPort::NoParity);
+    arduino->setStopBits(QSerialPort::OneStop);
+    arduino->setFlowControl(QSerialPort::NoFlowControl);
+
+    qDebug() << "Arduino connecté sur" << arduinoPortName;
+
+    // 🔹 Connecter le signal quand des données arrivent
+    connect(arduino, &QSerialPort::readyRead,
+            this,   &gestionclient::readSerialData);
+}
+
+// =========================
+//   Lecture du port série
+// =========================
+
+void gestionclient::readSerialData()
+{
+    QByteArray data = arduino->readAll();
+
+    for (char c : data)
+    {
+        qDebug() << "Reçu du keypad:" << c;
+
+        // Si c'est un chiffre → on l'ajoute
+        if (c >= '0' && c <= '9') {
+            ui->lineEdit_tel->insert(QString(c));
+        }
+
+        // Si c'est 'A' → effacer 1 caractère (backspace)
+        else if (c == 'A') {
+            QString txt = ui->lineEdit_tel->text();
+            if (!txt.isEmpty()) {
+                txt.chop(1);  // supprime le dernier caractère
+                ui->lineEdit_tel->setText(txt);
+            }
+        }
+
+        // Si c'est '*' → effacer tout
+        else if (c == '*') {
+            ui->lineEdit_tel->clear();
+        }
+
+        // Si c'est '#' → on ignore ou on pourra valider plus tard
+        else if (c == '#') {
+            // Ne rien faire pour le moment
+        }
     }
 }
 
-gestionclient::~gestionclient()
-{
-    delete ui;
-}
+
+
+
+
+
+// =========================
+//       Validations
+// =========================
 
 bool gestionclient::verifTelephone(QString* msg) const
 {
@@ -148,120 +220,6 @@ bool gestionclient::verifTelephone(QString* msg) const
     if (!ok) { if (msg) *msg = "Téléphone doit être numérique (colonne NUMBER)."; return false; }
     return true;
 }
-
-void gestionclient::remplirTable()
-{
-    QSqlQueryModel *model = Client::afficher();   // suppose retourner un QSqlQueryModel*
-    if (!model) return;
-
-    const int rows = model->rowCount();
-    const int cols = model->columnCount();
-
-    ui->tableWidget->clear();
-    ui->tableWidget->setRowCount(rows);
-    ui->tableWidget->setColumnCount(cols);
-
-    // En-têtes
-    QStringList headers;
-    for (int c = 0; c < cols; ++c)
-        headers << model->headerData(c, Qt::Horizontal).toString();
-    ui->tableWidget->setHorizontalHeaderLabels(headers);
-
-    // Données
-    for (int r = 0; r < rows; ++r)
-        for (int c = 0; c < cols; ++c)
-            ui->tableWidget->setItem(
-                r, c, new QTableWidgetItem(model->data(model->index(r, c)).toString()));
-
-    delete model; // libère le modèle récupéré
-}
-
-void gestionclient::on_pushButton_1_clicked()   // AJOUT
-{
-    QString msg;
-    // Tu peux choisir l’un des deux: verifTelephone (simple) OU verifTelephoneTN (Tunisie)
-    // if (!verifTelephone(&msg)) { QMessageBox::warning(this, "Téléphone", msg); return; }
-    if (!verifTelephoneTN(&msg)) { QMessageBox::warning(this, "Téléphone", msg); return; }
-    if (!verifEmail(&msg))       { QMessageBox::warning(this, "Email", msg); return; }
-
-    Client c;
-    c.id_client = ui->lineEdit_id->text().toInt();
-    c.nom       = ui->lineEdit_nom->text().trimmed();
-    c.prenom    = ui->lineEdit_prenom->text().trimmed();
-    c.telephone = ui->lineEdit_tel->text().trimmed();
-    c.email     = ui->lineEdit_email->text().trimmed();
-
-    if (c.ajouter()) {
-        QMessageBox::information(this, "Succès", "Ajout effectué.");
-        remplirTable();   // pas de clear (selon ta demande)
-    } else {
-        QMessageBox::critical(this, "Erreur", "Ajout non effectué.");
-    }
-}
-
-void gestionclient::on_pushButton_modifier_clicked()
-{
-    QString msg;
-
-    if (!verifTelephoneTN(&msg)) { QMessageBox::warning(this, "Téléphone", msg); return; }
-    if (!verifEmail(&msg))       { QMessageBox::warning(this, "Email", msg); return; }
-
-    int id = ui->lineEdit_id->text().toInt();
-    if (id <= 0) {
-        QMessageBox::warning(this, "Modifier", "ID_CLIENT invalide.");
-        return;
-    }
-
-    Client c;
-    c.id_client = id;
-    c.nom       = ui->lineEdit_nom->text().trimmed();
-    c.prenom    = ui->lineEdit_prenom->text().trimmed();
-    c.telephone = ui->lineEdit_tel->text().trimmed();
-    c.email     = ui->lineEdit_email->text().trimmed();
-
-    if (c.modifier()) {
-        QMessageBox::information(this, "Modifier", "Mise à jour effectuée.");
-        remplirTable();   // on rafraîchit le tableau
-    } else {
-        QMessageBox::critical(this, "Modifier", "Erreur lors de la mise à jour.");
-    }
-}
-
-
-
-void gestionclient::on_pushButton_supprimer_clicked()
-{
-    int id = ui->lineEdit_id->text().toInt();
-    if (id <= 0) {
-        QMessageBox::warning(this, "Supprimer", "ID_CLIENT invalide.");
-        return;
-    }
-
-    if (Client::supprimer(id)) {
-        QMessageBox::information(this, "Supprimer", "Suppression effectuée.");
-        remplirTable();
-        // Clear uniquement à la suppression (comme demandé)
-        ui->lineEdit_id->clear();
-        ui->lineEdit_nom->clear();
-        ui->lineEdit_prenom->clear();
-        ui->lineEdit_tel->clear();
-        ui->lineEdit_email->clear();
-        ui->tableWidget->clearSelection();
-    } else {
-        QMessageBox::critical(this, "Supprimer", "Suppression non effectuée.");
-    }
-}
-
-void gestionclient::goTomainwindow()
-{
-    MainWindow *Me = new MainWindow(this);
-    Me->show();
-    this->hide();
-}
-
-// =========================
-// Helpers / Validations
-// =========================
 
 QString gestionclient::normalizePhone(const QString& raw)
 {
@@ -313,10 +271,130 @@ bool gestionclient::verifEmail(QString* msg) const
     if (msg) *msg = "Email invalide. Exemple : nom.prenom@example.com";
     return false;
 }
-// =====================================================
-// =====================================================
-// === AJOUT : Fonction de RECHERCHE par ID (préfixe) ====
-// =====================================================
+
+// =========================
+//   Remplir le QTableWidget
+// =========================
+
+void gestionclient::remplirTable()
+{
+    QSqlQueryModel *model = Client::afficher();   // suppose retourner un QSqlQueryModel*
+    if (!model) return;
+
+    const int rows = model->rowCount();
+    const int cols = model->columnCount();
+
+    ui->tableWidget->clear();
+    ui->tableWidget->setRowCount(rows);
+    ui->tableWidget->setColumnCount(cols);
+
+    // En-têtes
+    QStringList headers;
+    for (int c = 0; c < cols; ++c)
+        headers << model->headerData(c, Qt::Horizontal).toString();
+    ui->tableWidget->setHorizontalHeaderLabels(headers);
+
+    // Données
+    for (int r = 0; r < rows; ++r)
+        for (int c = 0; c < cols; ++c)
+            ui->tableWidget->setItem(
+                r, c, new QTableWidgetItem(model->data(model->index(r, c)).toString()));
+
+    delete model; // libère le modèle récupéré
+}
+
+// =========================
+//     Boutons CRUD Client
+// =========================
+
+void gestionclient::on_pushButton_1_clicked()   // AJOUT
+{
+    QString msg;
+
+    if (!verifTelephoneTN(&msg)) { QMessageBox::warning(this, "Téléphone", msg); return; }
+    if (!verifEmail(&msg))       { QMessageBox::warning(this, "Email", msg); return; }
+
+    Client c;
+    c.id_client = ui->lineEdit_id->text().toInt();
+    c.nom       = ui->lineEdit_nom->text().trimmed();
+    c.prenom    = ui->lineEdit_prenom->text().trimmed();
+    c.telephone = ui->lineEdit_tel->text().trimmed();
+    c.email     = ui->lineEdit_email->text().trimmed();
+
+    if (c.ajouter()) {
+        QMessageBox::information(this, "Succès", "Ajout effectué.");
+        remplirTable();
+    } else {
+        QMessageBox::critical(this, "Erreur", "Ajout non effectué.");
+    }
+}
+
+void gestionclient::on_pushButton_modifier_clicked()
+{
+    QString msg;
+
+    if (!verifTelephoneTN(&msg)) { QMessageBox::warning(this, "Téléphone", msg); return; }
+    if (!verifEmail(&msg))       { QMessageBox::warning(this, "Email", msg); return; }
+
+    int id = ui->lineEdit_id->text().toInt();
+    if (id <= 0) {
+        QMessageBox::warning(this, "Modifier", "ID_CLIENT invalide.");
+        return;
+    }
+
+    Client c;
+    c.id_client = id;
+    c.nom       = ui->lineEdit_nom->text().trimmed();
+    c.prenom    = ui->lineEdit_prenom->text().trimmed();
+    c.telephone = ui->lineEdit_tel->text().trimmed();
+    c.email     = ui->lineEdit_email->text().trimmed();
+
+    if (c.modifier()) {
+        QMessageBox::information(this, "Modifier", "Mise à jour effectuée.");
+        remplirTable();
+    } else {
+        QMessageBox::critical(this, "Modifier", "Erreur lors de la mise à jour.");
+    }
+}
+
+void gestionclient::on_pushButton_supprimer_clicked()
+{
+    int id = ui->lineEdit_id->text().toInt();
+    if (id <= 0) {
+        QMessageBox::warning(this, "Supprimer", "ID_CLIENT invalide.");
+        return;
+    }
+
+    if (Client::supprimer(id)) {
+        QMessageBox::information(this, "Supprimer", "Suppression effectuée.");
+        remplirTable();
+        // Clear uniquement à la suppression
+        ui->lineEdit_id->clear();
+        ui->lineEdit_nom->clear();
+        ui->lineEdit_prenom->clear();
+        ui->lineEdit_tel->clear();
+        ui->lineEdit_email->clear();
+        ui->tableWidget->clearSelection();
+    } else {
+        QMessageBox::critical(this, "Supprimer", "Suppression non effectuée.");
+    }
+}
+
+// =========================
+//  Navigation vers MainWindow
+// =========================
+
+void gestionclient::goTomainwindow()
+{
+    MainWindow *Me = new MainWindow(this);
+    Me->show();
+    this->hide();
+}
+
+// =========================
+//   Recherche par ID (prefix)
+// =========================
+
 void gestionclient::on_pushButton_2_clicked()
 {
     // Si le champ est déjà vide → on recharge juste la table
@@ -326,7 +404,7 @@ void gestionclient::on_pushButton_2_clicked()
     }
 
     // Sinon on efface le texte : ça déclenchera on_lineEdit_textChanged("")
-    ui->lineEdit->clear();   // <- déclenche on_lineEdit_textChanged
+    ui->lineEdit->clear();
 }
 
 void gestionclient::on_lineEdit_textChanged(const QString &text)
@@ -369,20 +447,19 @@ void gestionclient::on_lineEdit_textChanged(const QString &text)
 
     delete model;
 }
+
 void gestionclient::on_tableWidget_cellClicked(int row, int column)
 {
-    Q_UNUSED(column); // on ne s'en sert pas
+    Q_UNUSED(column);
 
-    // Récupère les items de la ligne cliquée
     QTableWidgetItem *idItem     = ui->tableWidget->item(row, 0);
     QTableWidgetItem *nomItem    = ui->tableWidget->item(row, 1);
     QTableWidgetItem *prenomItem = ui->tableWidget->item(row, 2);
     QTableWidgetItem *telItem    = ui->tableWidget->item(row, 3);
     QTableWidgetItem *mailItem   = ui->tableWidget->item(row, 4);
 
-    if (!idItem) return; // ligne vide ou invalide
+    if (!idItem) return;
 
-    // Remplir les champs "Ajouter"
     ui->lineEdit_id->setText(idItem->text());
     ui->lineEdit_nom->setText(nomItem ? nomItem->text() : "");
     ui->lineEdit_prenom->setText(prenomItem ? prenomItem->text() : "");
@@ -390,6 +467,9 @@ void gestionclient::on_tableWidget_cellClicked(int row, int column)
     ui->lineEdit_email->setText(mailItem ? mailItem->text() : "");
 }
 
+// =========================
+//     Génération du PDF
+// =========================
 
 QImage generateSmallQR(const QString &text, int size = 90)
 {
@@ -406,9 +486,6 @@ QImage generateSmallQR(const QString &text, int size = 90)
     // Agrandir proprement pour le PDF
     return img.scaled(size, size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 }
-
-
-
 
 void gestionclient::on_pushButton_pdf_clicked()
 {
@@ -430,7 +507,6 @@ void gestionclient::on_pushButton_pdf_clicked()
         return;
     }
 
-    // === Marges & dimensions ===
     const int LM = 70, TM = 150, RM = 70, BM = 100;
     const int pageW = pdf.width();
     const int pageH = pdf.height();
@@ -438,24 +514,21 @@ void gestionclient::on_pushButton_pdf_clicked()
     const int spacing = 20;
     const int rowH = 90;
 
-    // === Largeurs des colonnes ===
     const int wID     = 160;
     const int wNom    = 260;
     const int wPrenom = 260;
     const int wTel    = 260;
-    const int wQR     = 120;   // 🔹 dernière colonne QR
+    const int wQR     = 120;
 
     int wMail = contentW - (wID + wNom + wPrenom + wTel + wQR) - 5 * spacing;
     if (wMail < 300) wMail = 300;
 
-    // === Polices ===
     QFont titleFont("Arial", 26, QFont::Bold);
     QFont headerFont("Arial", 16, QFont::Bold);
     QFont dataFont("Arial", 15);
 
     int y = TM;
 
-    // === Titre ===
     painter.setFont(titleFont);
     painter.drawText(LM, y,
                      QString("Liste des Clients - %1")
@@ -463,7 +536,6 @@ void gestionclient::on_pushButton_pdf_clicked()
                                   .toString("yyyy-MM-dd HH:mm:ss")));
     y += 130;
 
-    // === Fonctions utilitaires ===
     painter.setFont(headerFont);
 
     auto rectsAtY = [&](int yy) {
@@ -477,13 +549,12 @@ void gestionclient::on_pushButton_pdf_clicked()
     };
 
     auto drawHeaderCell = [&](const QRect &r, const QString &txt) {
-        painter.fillRect(r, QColor(200, 200, 255)); // bleu clair
+        painter.fillRect(r, QColor(200, 200, 255));
         painter.drawRect(r);
         painter.drawText(r.adjusted(20, 0, -20, 0),
                          Qt::AlignLeft | Qt::AlignVCenter, txt);
     };
 
-    // === Ligne d’en-têtes ===
     auto H = rectsAtY(y);
     drawHeaderCell(H[0], "ID");
     drawHeaderCell(H[1], "Nom");
@@ -493,7 +564,6 @@ void gestionclient::on_pushButton_pdf_clicked()
     drawHeaderCell(H[5], "QR");
     y += rowH + 25;
 
-    // === Données ===
     QSqlQueryModel *model = Client::afficher();
     if (!model || model->rowCount() == 0) {
         QMessageBox::information(this, "PDF", "Aucun client à exporter !");
@@ -524,7 +594,6 @@ void gestionclient::on_pushButton_pdf_clicked()
 
         auto R = rectsAtY(y);
 
-        // Alternance de couleur de fond
         if (r % 2 == 1)
             painter.fillRect(QRect(LM, y, contentW, rowH),
                              QColor(245, 245, 245));
@@ -535,11 +604,9 @@ void gestionclient::on_pushButton_pdf_clicked()
         QString tel    = model->data(model->index(r, 3)).toString();
         QString mail   = model->data(model->index(r, 4)).toString();
 
-        // Bordures des cellules
         for (const QRect &rc : R)
             painter.drawRect(rc);
 
-        // === Texte des colonnes ===
         painter.drawText(R[0].adjusted(20, 0, -20, 0),
                          Qt::AlignLeft | Qt::AlignVCenter, id);
         painter.drawText(R[1].adjusted(20, 0, -20, 0),
@@ -554,9 +621,6 @@ void gestionclient::on_pushButton_pdf_clicked()
                          Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, mail);
         painter.restore();
 
-        // === QR Code (dernière colonne) ===
-        // === QR Code (dernière colonne) ===
-        // On encode toutes les infos principales du client
         QString qrText = QString(
                              "ID: %1\nNom: %2\nPrénom: %3\nTéléphone: %4\nEmail: %5"
                              ).arg(id, nom, prenom, tel, mail);
@@ -573,29 +637,32 @@ void gestionclient::on_pushButton_pdf_clicked()
                              "PDF sauvegardé avec succès à : " + filePath);
 }
 
+// =========================
+//    PieChartWidget & stats
+// =========================
+
 class PieChartWidget : public QWidget
 {
 public:
     PieChartWidget(const QMap<QString,int>& stats, QWidget *parent = nullptr)
         : QWidget(parent),
         m_stats(stats),
-        m_progress(0.0)     // 0 = vide, 1 = disque complet
+        m_progress(0.0)
     {
-        // Timer d’animation : ~60 FPS
         QTimer *timer = new QTimer(this);
         connect(timer, &QTimer::timeout, this, [this, timer]() {
 
-            m_progress += 0.03;   // vitesse de remplissage (≈ 1 sec)
+            m_progress += 0.03;
             if (m_progress >= 1.0) {
                 m_progress = 1.0;
                 timer->stop();
                 timer->deleteLater();
             }
 
-            update(); // redessiner => apparition en LIVE
+            update();
         });
 
-        timer->start(16); // 16 ms ≈ 60 FPS
+        timer->start(16);
     }
 
 protected:
@@ -608,18 +675,16 @@ protected:
         p.setRenderHint(QPainter::Antialiasing);
 
         int diameter = qMin(width(), height()) * 0.55;
-        int centerX  = (width()  - diameter) / 2 - 60; // décalé pour la légende
+        int centerX  = (width()  - diameter) / 2 - 60;
         int centerY  = (height() - diameter) / 2;
 
         QRectF rect(centerX, centerY, diameter, diameter);
 
-        // Total
         int total = 0;
         for (auto v : m_stats)
             total += v;
         if (total == 0) return;
 
-        // Couleurs
         QList<QColor> colors = {
             QColor(255, 153, 153),
             QColor(153, 204, 255),
@@ -628,9 +693,8 @@ protected:
             QColor(217, 179, 255)
         };
 
-        // ==== CAMEMBERT AVEC APPARITION DANS UN SEUL SENS ====
-        double maxAngleToDraw = 360.0 * m_progress; // angle total actuellement visible
-        double currentStart   = 0.0;                // on part toujours du même sens
+        double maxAngleToDraw = 360.0 * m_progress;
+        double currentStart   = 0.0;
         int index = 0;
 
         for (auto it = m_stats.begin(); it != m_stats.end(); ++it) {
@@ -640,11 +704,9 @@ protected:
             double sliceAngle = 360.0 * value / total;
             double sliceEnd   = currentStart + sliceAngle;
 
-            // Si tout ce secteur est au-delà de la zone visible -> on arrête
             if (currentStart >= maxAngleToDraw)
                 break;
 
-            // Angle effectivement à dessiner pour ce secteur
             double visibleEnd = qMin(sliceEnd, maxAngleToDraw);
             double visibleAngle = visibleEnd - currentStart;
             if (visibleAngle <= 0.0) {
@@ -663,7 +725,6 @@ protected:
             index++;
         }
 
-        // ==== LÉGENDE (fixe) ====
         int y = 50;
         index = 0;
         for (auto it = m_stats.begin(); it != m_stats.end(); ++it) {
@@ -678,7 +739,7 @@ protected:
             p.drawText(width() - 130, y + 12,
                        QString("%1 — %2% (%3)")
                            .arg(it.key())
-                           .arg(QString::number(percent, 'f', 1)) // arrondi 1 chiffre
+                           .arg(QString::number(percent, 'f', 1))
                            .arg(value));
 
             y += 28;
@@ -688,12 +749,8 @@ protected:
 
 private:
     QMap<QString,int> m_stats;
-    double m_progress;   // 0 → 1 : progression de l’apparition
+    double m_progress;
 };
-
-
-
-
 
 void gestionclient::on_pushButton_stat_clicked()
 {
@@ -716,11 +773,6 @@ void gestionclient::on_pushButton_stat_clicked()
     dlg->exec();
 }
 
-
-
-// =====================================================
-//  Bouton statistiques : affiche le camembert
-// =====================================================
 void gestionclient::on_pushButton_trier_clicked()
 {
     QString critere = ui->comboBox->currentText();
@@ -744,7 +796,6 @@ void gestionclient::on_pushButton_trier_clicked()
         return;
     }
 
-    // Remplir le tableau
     ui->tableWidget->setRowCount(model->rowCount());
     ui->tableWidget->setColumnCount(model->columnCount());
 
@@ -765,12 +816,21 @@ void gestionclient::on_pushButton_trier_clicked()
     delete model;
 }
 
+// =========================
+//      QR code par client
+// =========================
+
 void gestionclient::on_pushButton_qr_clicked()
 {
-    qrcodechai dialog(this);                 // Créer le dialog QR
-    dialog.setWindowTitle("QR Code Client"); // Titre de la fenêtre
-    dialog.exec();                           // Affichage modal
+    qrcodechai dialog(this);
+    dialog.setWindowTitle("QR Code Client");
+    dialog.exec();
 }
+
+// =========================
+//      Synthèse vocale
+// =========================
+
 void gestionclient::on_pushButton_speech_clicked()
 {
     if (!speech) {
@@ -790,7 +850,6 @@ void gestionclient::on_pushButton_speech_clicked()
     QString telephone = ui->tableWidget->item(row, 3)->text();
     QString email     = ui->tableWidget->item(row, 4)->text();
 
-    // Voix sélectionnée
     if (voiceCombo) {
         int voiceIndex = voiceCombo->currentIndex();
         const auto voices = speech->availableVoices();
@@ -798,10 +857,7 @@ void gestionclient::on_pushButton_speech_clicked()
             speech->setVoice(voices.at(voiceIndex));
     }
 
-    // Téléphone en chiffres séparés
     QString telSpell = spellDigits(telephone);
-
-    // 👉 Email naturel : "chaima at gmail dot com"
     QString emailSpell = emailNatural(email);
 
     QString texte = QString(
@@ -811,9 +867,9 @@ void gestionclient::on_pushButton_speech_clicked()
     speech->say(texte);
 }
 
-
-
-
+// =========================
+//         MainWindow
+// =========================
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -821,48 +877,37 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
 
-    // Remplir la ComboBox Type
     ui->cb_type->addItems({"PC", "Smartphone", "Tablette"});
 
-    // Initialiser le tableau
     ui->tableWidget->setColumnCount(6);
-    ui->tableWidget->setHorizontalHeaderLabels(QStringList() << "ID" << "Type" << "Marque/Modèle" << "Date dépôt" << "Description" << "État");
+    ui->tableWidget->setHorizontalHeaderLabels(
+        QStringList() << "ID" << "Type" << "Marque/Modèle"
+                      << "Date dépôt" << "Description" << "État");
     ui->tableWidget->setEditTriggers(QAbstractItemView::NoEditTriggers);
     ui->tableWidget->horizontalHeader()->setStretchLastSection(true);
 
-    // permet modifier la cellule par double-clic
     ui->tableWidget->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::SelectedClicked);
     ui->tableWidget->setSelectionBehavior(QAbstractItemView::SelectRows);
     ui->tableWidget->setSelectionMode(QAbstractItemView::SingleSelection);
 
-    // connect auto (si slot nommé on_tableWidget_cellChanged, Qt auto-connect fonctionne),
-    // sinon connect explicitement :
-    //connect(ui->tableWidget, &QTableWidget::cellChanged, this, &MainWindow::on_tableWidget_cellChanged);
-
-
     refreshTable();
-    // Quand l'utilisateur clique sur une cellule -> sélection de la ligne entière et remplissage du formulaire
+
     connect(ui->tableWidget, &QTableWidget::cellClicked, this, [this](int row, int /*col*/){
         if (row < 0) return;
-        // Protéger contre items nuls
         QTableWidgetItem *itId = ui->tableWidget->item(row, 0);
         if (!itId) return;
 
-        // Remplir les champs du formulaire avec les valeurs de la ligne
         ui->le_id->setText(itId->text());
         if (ui->tableWidget->item(row, 1)) ui->cb_type->setCurrentText(ui->tableWidget->item(row, 1)->text());
         if (ui->tableWidget->item(row, 2)) ui->le_marque->setText(ui->tableWidget->item(row, 2)->text());
         if (ui->tableWidget->item(row, 3)) {
             QString dateText = ui->tableWidget->item(row, 3)->text();
-            QDate d = QDate::fromString(dateText, "dd/MM/yyyy");
+            QDate d = QDate::fromString(dateText, "yyyy-MM-dd");
             if (d.isValid()) ui->date_depot->setDate(d);
         }
         if (ui->tableWidget->item(row, 4)) ui->te_desc->setPlainText(ui->tableWidget->item(row, 4)->text());
-        // Stocker la ligne sélectionnée si besoin
         ui->tableWidget->selectRow(row);
     });
-
-
 }
 
 MainWindow::~MainWindow()
@@ -870,13 +915,13 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
-// Fonction pour recharger le contenu du QTableWidget
 void MainWindow::refreshTable()
 {
     ui->tableWidget->blockSignals(true);
     QSqlQuery query;
-    // Un SELECT explicite, vérifier les noms de colonnes exacts
-    if (!query.exec("SELECT ID, TYPE, MARQUEMODELE, DATEDEPOT, DESCRIPTION_PANNE, ETAT FROM EQUIPEMENT ORDER BY ID")) {
+
+    if (!query.exec("SELECT ID, TYPE, MARQUEMODELE, DATEDEPOT, DESCRIPTION_PANNE, ETAT "
+                    "FROM EQUIPEMENT ORDER BY ID")) {
         qDebug() << "refreshTable SELECT error:" << query.lastError().text();
         QMessageBox::critical(this, "Erreur SQL", "Impossible de lire la table :\n" + query.lastError().text());
         ui->tableWidget->blockSignals(false);
@@ -884,19 +929,17 @@ void MainWindow::refreshTable()
     }
 
     ui->tableWidget->clearContents();
-
     ui->tableWidget->setRowCount(0);
     int row = 0;
     while (query.next()) {
         ui->tableWidget->insertRow(row);
 
         QTableWidgetItem *it0 = new QTableWidgetItem(query.value("ID").toString());
-        it0->setFlags(it0->flags() & ~Qt::ItemIsEditable); // ID non editable
+        it0->setFlags(it0->flags() & ~Qt::ItemIsEditable);
         ui->tableWidget->setItem(row, 0, it0);
         ui->tableWidget->setItem(row, 1, new QTableWidgetItem(query.value("TYPE").toString()));
         ui->tableWidget->setItem(row, 2, new QTableWidgetItem(query.value("MARQUEMODELE").toString()));
 
-        // DATEDEPOT peut être renvoyé sous forme de QDate ou QString via ODBC :
         QVariant v = query.value("DATEDEPOT");
         QString dateText;
         if (v.canConvert<QDate>()) dateText = v.toDate().toString("yyyy-MM-dd");
@@ -907,7 +950,9 @@ void MainWindow::refreshTable()
         ui->tableWidget->setItem(row, 5, new QTableWidgetItem(query.value("ETAT").toString()));
         row++;
     }
+    ui->tableWidget->blockSignals(false);
 }
+
 void MainWindow::clearForm()
 {
     ui->le_id->clear();
@@ -917,7 +962,6 @@ void MainWindow::clearForm()
     ui->cb_type->setCurrentIndex(0);
 }
 
-// ➕ Ajouter
 void MainWindow::on_btn_ajouter_clicked()
 {
     int id = ui->le_id->text().toInt();
@@ -925,7 +969,7 @@ void MainWindow::on_btn_ajouter_clicked()
     QString marque = ui->le_marque->text();
     QString desc = ui->te_desc->toPlainText();
     QDate date = ui->date_depot->date();
-    QString etat = "en cours"; // valeur par défaut
+    QString etat = "en cours";
 
     if (id <= 0 || marque.isEmpty() || desc.isEmpty()) {
         QMessageBox::warning(this, "Erreur", "Veuillez remplir tous les champs obligatoires !");
@@ -953,10 +997,8 @@ void MainWindow::on_btn_ajouter_clicked()
     }
 }
 
-// ✏️ Modifier
 void MainWindow::on_btn_modifier_clicked()
 {
-    // 🔹 Vérifier qu’une ligne est bien sélectionnée
     QList<QTableWidgetItem*> selectedItems = ui->tableWidget->selectedItems();
     if (selectedItems.isEmpty()) {
         QMessageBox::warning(this, "Avertissement", "Veuillez sélectionner une ligne à modifier !");
@@ -969,7 +1011,6 @@ void MainWindow::on_btn_modifier_clicked()
         return;
     }
 
-    // 🔹 Récupérer les données depuis le tableau (pas depuis les lineEdits)
     QString id = ui->tableWidget->item(row, 0)->text();
     QString type = ui->tableWidget->item(row, 1)->text();
     QString marque = ui->tableWidget->item(row, 2)->text();
@@ -977,14 +1018,12 @@ void MainWindow::on_btn_modifier_clicked()
     QString desc = ui->tableWidget->item(row, 4)->text();
     QString etat = ui->tableWidget->item(row, 5)->text();
 
-    // Vérifier que la date est valide
     QDate date = QDate::fromString(dateStr, "yyyy-MM-dd");
     if (!date.isValid()) {
         QMessageBox::warning(this, "Date invalide", "Format de date invalide (utilise yyyy-MM-dd)");
         return;
     }
 
-    // 🔹 Créer la requête de mise à jour
     QSqlQuery query;
     query.prepare("UPDATE EQUIPEMENT SET TYPE = :type, MARQUEMODELE = :marque, "
                   "DATEDEPOT = TO_DATE(:date, 'YYYY-MM-DD'), "
@@ -1002,23 +1041,18 @@ void MainWindow::on_btn_modifier_clicked()
         return;
     }
 
-    // 🔹 Commit pour Oracle (nécessaire parfois avec ODBC)
     QSqlDatabase::database().commit();
 
     QMessageBox::information(this, "Succès", "✅ Modification enregistrée avec succès !");
     qDebug() << "✅ Ligne ID" << id << "mise à jour dans Oracle.";
 
-    // 🔹 Recharger le tableau pour afficher les nouvelles données
     refreshTable();
 }
 
-
-
-// ---------- SUPPRIMER ----------
 void MainWindow::on_btn_supprimer_clicked()
 {
-    int id = ui->le_id->text().toInt();  // Récupère l’ID de la zone de texte
-    bool test = eqTmp.supprimer(id);      // Appel de la méthode du modèle
+    int id = ui->le_id->text().toInt();
+    bool test = eqTmp.supprimer(id);
 
     if (test)
     {
@@ -1035,13 +1069,7 @@ void MainWindow::on_btn_supprimer_clicked()
     }
 }
 
-
-
-// 🔄 Actualiser
 void MainWindow::on_btn_actualiser_clicked()
 {
     refreshTable();
 }
-
-
-
