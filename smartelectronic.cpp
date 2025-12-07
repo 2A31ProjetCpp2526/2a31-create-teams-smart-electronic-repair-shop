@@ -64,12 +64,32 @@ SmartElectronic:: SmartElectronic(QWidget *parent)
     : QMainWindow(parent),
     ui(new Ui::SmartElectronic),
     speech(new QTextToSpeech(this)),
-    voiceCombo(nullptr)
+    voiceCombo(nullptr),
+    arduino(nullptr),
+    arduinoPortName("")
 {
     ui->setupUi(this);
+
+
+
     ui->stackedWidget->setCurrentWidget(ui->PageEquipement);
+    ui->lbl_badge->hide();
     ui->date_depot->setDate(QDate::currentDate());
     ui->date_limite->setDate(QDate::currentDate());
+    A = new Arduino(this);
+
+    if (A->connectArduino())
+        qDebug() << "Arduino OK";
+    else
+        qDebug() << "Arduino non detecte";
+
+    connect(A, &Arduino::dataReceived,
+            this, &SmartElectronic::onArduinoData);
+
+
+
+
+
 
     afficherStatEtatPie();
 
@@ -139,6 +159,10 @@ SmartElectronic:: SmartElectronic(QWidget *parent)
         QRegularExpression(R"(^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$)",
                            QRegularExpression::CaseInsensitiveOption),
         ui->lineEdit_email));
+
+
+    // ====== Initialisation Arduino (clépad) ======
+    initSerialPort();
 
 
 }
@@ -516,53 +540,7 @@ void clearLayout(QLayout *layout)
     }
 }
 
-/*// Fonction principale pour afficher le graphique en secteurs par état
-void SmartElectronic::afficherStatEtatPie()
-{
-    // 1️⃣ Récupérer ou créer le layout du widget_stat
-    QVBoxLayout *layout = qobject_cast<QVBoxLayout*>(ui->widget_stat->layout());
-    if (!layout) {
-        layout = new QVBoxLayout(ui->widget_stat);
-        layout->setContentsMargins(0, 0, 0, 0);
-        ui->widget_stat->setLayout(layout);
-    } else {
-        clearLayout(layout); // Supprimer les anciens widgets
-    }
 
-    // 2️⃣ Récupérer les statistiques depuis la base de données
-    QSqlQuery query("SELECT UPPER(ETAT), COUNT(*) FROM EQUIPEMENT GROUP BY UPPER(ETAT)");
-
-
-    QPieSeries *series = new QPieSeries();
-    series->setHoleSize(0); // Pas de donut, graphique plein
-
-    while (query.next()) {
-        QString etat = query.value(0).toString().toLower();
-        etat[0] = etat[0].toUpper();   // Mise en forme propre du texte
-
-        int count = query.value(1).toInt();
-
-        // Ajouter une tranche au pie chart
-        QPieSlice *slice = series->append(etat + " (" + QString::number(count) + ")", count);
-        slice->setLabelVisible(true);
-        slice->setLabelColor(Qt::black);
-        slice->setLabelPosition(QPieSlice::LabelOutside);
-    }
-
-    // 3️⃣ Créer le chart et le configurer
-    QChart *chart = new QChart();
-    chart->setMinimumHeight(250);
-    chart->addSeries(series);
-    chart->setTitle("État des équipements");
-    chart->legend()->setAlignment(Qt::AlignBottom);
-
-    // 4️⃣ Créer le ChartView pour l’afficher
-    QChartView *chartView = new QChartView(chart);
-    chartView->setRenderHint(QPainter::Antialiasing);
-
-    // 5️⃣ Ajouter le ChartView au layout existant
-    layout->addWidget(chartView);
-}*/
 void SmartElectronic::on_btn_image_clicked()
 {
     QString file = QFileDialog::getOpenFileName(
@@ -832,6 +810,7 @@ void SmartElectronic::chargerNotifications()
 
         if (joursRestants >= 0 && joursRestants <= 3) {
             notifications.append(msg);
+            sendBeepToArduino(id,joursRestants);
         }
 
         afficherNotifications();
@@ -906,6 +885,142 @@ void SmartElectronic::on_btnEquipement_clicked()
 {
     ui->stackedWidget->setCurrentWidget(ui->PageEquipement);
 }
+
+
+/*void SmartElectronic::onArduinoData(QString data)
+{
+    qDebug() << "Arduino → Qt =" << data;
+
+    if (data.startsWith("NEW")) {
+        QStringList parts = data.split(";");
+        QString idPart = parts.at(1); // "ID=005"
+
+        int id = idPart.split("=")[1].toInt();
+
+        QSqlQuery q;
+        q.prepare("INSERT INTO equipements (ID_EQUIPEMENT, TYPE, ETAT, DATE_DEPOT) "
+                  "VALUES (:id, 'INCONNU', 'EN_COURS', SYSDATE)");
+        q.bindValue(":id", id);
+        q.exec();
+    }
+
+    else if (data == "CLOSE") {
+        ui->label_status->setText("Porte fermée");
+        // TODO : MAJ base de données
+    }
+    else if (data == "LATE") {
+        ui->label_status->setText("Retard détecté");
+        A->writeToArduino("BEEP\n");   // QT → Arduino
+    }
+}*/
+/*void SmartElectronic::onArduinoData(QString data)
+{
+    // Read all available data and add to buffer
+    QString msg = A->dataReceived(data);
+
+    // Process complete lines
+    while (serialBuffer.contains("\n")) {
+
+        QString line = serialBuffer.section("\n", 0, 0).trimmed(); // first line
+        serialBuffer = serialBuffer.section("\n", 1);              // remove it
+
+        qDebug() << "Arduino → Qt =" << line;
+
+        // ---- PROCESS A FULL LINE ----
+        if (line.startsWith("NEW")) {
+            QStringList parts = line.split(";");
+            QString idPart = parts.at(1); // ID=015
+            int id = idPart.split("=")[1].toInt();
+
+            QSqlQuery q;
+            q.prepare("INSERT INTO equipements (ID_EQUIPEMENT, TYPE, ETAT, DATE_DEPOT)"
+                      " VALUES (:id, 'INCONNU', 'EN_COURS', SYSDATE)");
+            q.bindValue(":id", id);
+            q.exec();
+        }
+
+        else if (line == "CLOSE") {
+            ui->label_status->setText("Porte fermée");
+        }
+
+        else if (line == "LATE") {
+            ui->label_status->setText("Retard détecté");
+            A->writeToArduino("BEEP\n");
+        }
+    }
+}*/
+
+void SmartElectronic::onArduinoData(QString chunk)
+{
+    serialBuffer += chunk;
+
+    int pos;
+    while ((pos = serialBuffer.indexOf("\n")) != -1)
+    {
+        QString msg = serialBuffer.left(pos).trimmed();
+        serialBuffer.remove(0, pos + 1);
+
+        if (msg.isEmpty()) continue;
+
+        qDebug() << "MSG Arduino =" << msg;
+
+        if (msg.startsWith("NEW")) {
+            QStringList parts = msg.split(";");
+            int id = 0;
+
+            for (QString p : parts)
+                if (p.startsWith("ID="))
+                    id = p.split("=")[1].toInt();
+
+            if (id > 0) {
+                QSqlQuery q;
+                q.prepare("INSERT INTO equipement "
+                          "(ID_EQUIPEMENT, ETAT, DATE_DEPOT) "
+                          "VALUES (:id,'En cours', SYSDATE)");
+                q.bindValue(":id", id);
+                q.exec();
+            }
+        }
+        else if (msg.startsWith("LIVRE"))
+        {
+            ui->label_status->setText("Porte fermée");
+
+            QSqlQuery q("UPDATE equipement SET etat='Livré' "
+                        "WHERE ID_EQUIPEMENT=(SELECT MAX(ID_EQUIPEMENT) FROM equipement)");
+        }
+        else if (msg.startsWith("LATE"))
+        {
+            A->writeToArduino("BEEP\n");
+
+            QStringList parts = msg.split(";");
+            int id = 0;
+
+            for (QString p : parts)
+                if (p.startsWith("ID="))
+                    id = p.split("=")[1].toInt();
+
+            if (id > 0) {
+                QSqlQuery q;
+                q.prepare("UPDATE equipement SET etat='RETARD' WHERE ID_EQUIPEMENT=:id");
+                q.bindValue(":id", id);
+                q.exec();
+            }
+        }
+    }
+}
+
+
+
+
+
+
+void SmartElectronic::sendBeepToArduino(QString id, int joursRestants)
+{
+    QString message = QString("BEEP %1 %2\n").arg(id).arg(joursRestants);
+    A->writeToArduino(message.toUtf8());
+    A->writeToArduino("RESET\n");
+}
+
 
 
 //gestion client
@@ -1543,5 +1658,94 @@ void SmartElectronic::on_pushButton_speech_clicked()
                         ).arg(id, nom, prenom, telephone, email);
 
     speech->say(texte);
+}
+
+// =========================
+//   Initialisation Arduino
+// =========================
+
+void SmartElectronic::initSerialPort()
+{
+    arduino = new QSerialPort(this);
+
+    bool arduinoFound = false;
+
+    // IDs définis dans le .h
+    const quint16 arduinoUnoVendorId  = ARDUINO_UNO_VENDOR_ID;
+    const quint16 arduinoUnoProductId = ARDUINO_UNO_PRODUCT_ID;
+
+    for (const QSerialPortInfo &info : QSerialPortInfo::availablePorts()) {
+        if (info.hasVendorIdentifier() && info.hasProductIdentifier()) {
+            if (info.vendorIdentifier() == arduinoUnoVendorId &&
+                info.productIdentifier() == arduinoUnoProductId) {
+
+                arduinoPortName = info.portName();
+                arduinoFound = true;
+                break;
+            }
+        }
+    }
+
+    if (!arduinoFound) {
+        qWarning() << "Arduino UNO non trouvé.";
+        return;
+    }
+
+    arduino->setPortName(arduinoPortName);
+    if (!arduino->open(QSerialPort::ReadWrite)) {
+        qWarning() << "Impossible d'ouvrir le port Arduino"
+                   << arduinoPortName << ":" << arduino->errorString();
+        return;
+    }
+
+    arduino->setBaudRate(QSerialPort::Baud9600);
+    arduino->setDataBits(QSerialPort::Data8);
+    arduino->setParity(QSerialPort::NoParity);
+    arduino->setStopBits(QSerialPort::OneStop);
+    arduino->setFlowControl(QSerialPort::NoFlowControl);
+
+    qDebug() << "Arduino connecté sur" << arduinoPortName;
+
+    // 🔹 Connecter le signal quand des données arrivent
+    connect(arduino, &QSerialPort::readyRead,
+            this,   &SmartElectronic::readSerialData);
+}
+
+// =========================
+//   Lecture du port série
+// =========================
+
+void SmartElectronic::readSerialData()
+{
+    QByteArray data = arduino->readAll();
+
+    for (char c : data)
+    {
+        qDebug() << "Reçu du keypad:" << c;
+
+        // Si c'est un chiffre → on l'ajoute
+        if (c >= '0' && c <= '9') {
+            ui->lineEdit_tel->insert(QString(c));
+        }
+
+        // Si c'est 'A' → effacer 1 caractère (backspace)
+        else if (c == 'A') {
+            QString txt = ui->lineEdit_tel->text();
+            if (!txt.isEmpty()) {
+                txt.chop(1);  // supprime le dernier caractère
+                ui->lineEdit_tel->setText(txt);
+            }
+        }
+
+        // Si c'est '*' → effacer tout
+        else if (c == '*') {
+            ui->lineEdit_tel->clear();
+        }
+
+        // Si c'est '#' → on ignore ou on pourra valider plus tard
+        else if (c == '#') {
+            // Ne rien faire pour le moment
+        }
+    }
 }
 

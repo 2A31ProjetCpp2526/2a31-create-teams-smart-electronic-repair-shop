@@ -20,6 +20,7 @@
 #include <QTextToSpeech>
 #include <QVoice>
 #include <QComboBox>
+#include "arduino.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class SmartElectronic; }
@@ -31,6 +32,7 @@ class  SmartElectronic : public QMainWindow
 public:
     explicit  SmartElectronic(QWidget *parent = nullptr);
     ~SmartElectronic();
+
 
 private slots:
     //equipement
@@ -55,6 +57,8 @@ private slots:
    void ajouterNotification(const QString &txt);
    void afficherNotifications();
    void on_btn_notif_clicked();
+   void onArduinoData(QString data);
+   void sendBeepToArduino(QString id, int joursRestants);
 
    //client
    void on_pushButton_1_clicked();         // Ajouter
@@ -67,6 +71,7 @@ private slots:
    void on_pushButton_qr_clicked();
    void on_pushButton_speech_clicked();   // 🔊 AJOUT ICI
    void on_lineEdit_textChanged(const QString &text);
+     void readSerialData();
 
 private:
     //equipement
@@ -81,6 +86,8 @@ private:
     // Liste des notifications
     QStringList notifications;
     bool notificationShown = false;
+    QString serialBuffer;
+
 
     //client
     void remplirClientTable();
@@ -96,5 +103,17 @@ private:
     Equipement Etmp;
     QTextToSpeech *speech;
     QComboBox *voiceCombo;
+    Arduino *A;
+
+    // 🔹 Port série pour l’Arduino
+    QSerialPort *arduino;
+    QString arduinoPortName;
+
+    static const quint16 ARDUINO_UNO_VENDOR_ID  = 9025; // 0x2341
+    static const quint16 ARDUINO_UNO_PRODUCT_ID = 67;   // 0x0043
+
+    // Initialisation du port série
+    void initSerialPort();
+
 };
 #endif
